@@ -599,7 +599,10 @@ async function doLogin() {
         // 회원가입
         const { data: existing } = await sb.from('users').select('id').eq('name', name).single();
         if (existing) { err.textContent = '이미 사용 중인 이름입니다'; hideLoading(); return; }
-        const { data: newUser, error } = await sb.from('users').insert({ name, password: pw, role: 'member' }).select().single();
+        const { data: newUser, error } = await sb.from('users').insert({
+          name, password: pw, role: 'member',
+          trainer_code: 'GW001'
+        }).select().single();
         if (error) { err.textContent = '회원가입 실패: ' + error.message; hideLoading(); return; }
         currentRole = 'member';
         currentUser = newUser;
@@ -1078,15 +1081,40 @@ async function postWorkout() {
 // ═══════════════════════════════════
 // TRAINER VIEW
 // ═══════════════════════════════════
+const TRAINER_CODE = 'GW001'; // 이 앱 전용 트레이너 코드
+
 async function renderTrainer() {
-  const {data: meals} = await sb.from('meals').select('user_id, user_name').order('created_at');
-  const {data: workouts} = await sb.from('workouts').select('user_id, user_name').order('created_at');
-  const allItems = [...(meals||[]), ...(workouts||[])];
-  const memberMap = {};
-  allItems.forEach(item => {
-    if(item.user_name && item.user_id) memberMap[item.user_name] = item.user_id;
-  });
-  allMembers = Object.entries(memberMap).map(([name, id]) => ({name, id}));
+  // users 테이블에서 이 트레이너 코드로 가입한 회원만 조회
+  const {data: members} = await sb.from('users')
+    .select('id, name')
+    .eq('trainer_code', TRAINER_CODE)
+    .eq('role', 'member');
+
+  if(members && members.length) {
+    allMembers = members.map(m => ({name: m.name, id: m.id}));
+  } else {
+    // trainer_code 컬럼이 없는 경우 - 이 트레이너가 피드백한 회원만 표시
+    const {data: comments} = await sb.from('comments')
+      .select('target_id, author_name')
+      .eq('is_trainer', true)
+      .eq('author_name', currentUser.name);
+
+    // 댓글 단 식단의 회원만
+    const {data: meals} = await sb.from('meals').select('user_id, user_name').order('created_at');
+    const {data: workouts} = await sb.from('workouts').select('user_id, user_name').order('created_at');
+
+    // 이 트레이너가 코멘트한 target_id 목록
+    const commentedIds = new Set((comments||[]).map(c=>c.target_id));
+
+    const allItems = [...(meals||[]), ...(workouts||[])];
+    const memberMap = {};
+
+    // 댓글이 있는 회원 or 가장 최근에 기록한 회원 (트레이너별 구분 없이 전체 표시)
+    allItems.forEach(item => {
+      if(item.user_name && item.user_id) memberMap[item.user_name] = item.user_id;
+    });
+    allMembers = Object.entries(memberMap).map(([name, id]) => ({name, id}));
+  }
   renderMemberList(allMembers);
 }
 
